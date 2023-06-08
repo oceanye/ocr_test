@@ -5,7 +5,7 @@ import pytesseract
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'  # 修改为你的 tesseract 路径
 
 # 读取图片
-img = cv2.imread('test.jpg')
+img = cv2.imread('test2.jpg')
 
 # 转为灰度图
 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)

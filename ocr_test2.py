@@ -28,7 +28,7 @@ def gray_guss(image):
 
 
 # 读取待检测图片
-origin_image = cv2.imread('./test.jpg')
+origin_image = cv2.imread('test2.jpg')
 # 复制一张图片，在复制图上进行图像操作，保留原图
 image = origin_image.copy()
 # 图像去噪灰度处理
