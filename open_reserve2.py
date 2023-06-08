@@ -74,7 +74,7 @@ while True:
         if not os.path.exists('cv_rev'):
             os.makedirs('cv_rev')
 
-        while True:
+        while blur_param < 10:
             blur = cv2.GaussianBlur(image, (blur_param, blur_param), 0)
             gray = cv2.cvtColor(blur, cv2.COLOR_BGR2GRAY)
 
@@ -104,18 +104,21 @@ while True:
 
                 scores.append(best_score)
 
-            if blur_param < 9:
-                blur_param += 2  # 确保 blur_param 总是奇数
-            else:
-                print('满足相似度要求，终止循环')
-                print('最终的参数设置是：', 'blur_param:', blur_param, ', thresh_param:', thresh_param)
+            blur_param += 2  # 确保 blur_param 总是奇数
+
+            if best_score < 0.8:
                 break
 
-# 绘制相似度分数曲线图
-plt.plot(list(thresh_params), scores)
-plt.xlabel('Threshold')
-plt.ylabel('Similarity Score')
-plt.title('Similarity Score vs. Threshold')
-plt.show()
+        print('满足相似度要求，终止循环')
+        print('最终的参数设置是：', 'blur_param:', blur_param-2, ', thresh_param:', thresh_param)
+
+        # 绘制相似度分数曲线图
+        plt.plot(list(thresh_params), scores)
+        plt.xlabel('Threshold')
+        plt.ylabel('Similarity Score')
+        plt.title('Similarity Score vs. Threshold')
+        plt.show()
+
+        break
 
 cv2.destroyAllWindows()
