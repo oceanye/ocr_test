@@ -3,124 +3,123 @@ import numpy as np
 from shapely.geometry import Polygon
 import os
 import matplotlib.pyplot as plt
+from tkinter import *
+from tkinter import filedialog
+from PIL import Image, ImageTk
 
-points = []
-selected_color = None
-mode = "point"  # This is to manage the different modes of operation
+class ImageProcessor:
+    def __init__(self, master):
+        self.master = master
+        self.frame = Frame(self.master)
+        self.frame.pack()
+        self.points = []
+        self.color_mode = False
+        self.color_lower = None
+        self.color_upper = None
 
-def mouse_event(event, x, y, flags, params):
-    global image, points, mode
-    # Select points in both modes
-    if event == cv2.EVENT_LBUTTONDOWN and len(points) < 4:
-        points.append((x, y))
-        cv2.circle(image, (x, y), 5, (0, 255, 0), -1)
+        self.image_label = Label(self.frame)
+        self.image_label.pack()
 
-    # Select color only in "color" mode
-    if event == cv2.EVENT_RBUTTONDOWN and mode == "color":
-        color = image[y, x]
-        hsv_color = cv2.cvtColor(np.uint8([[color]]), cv2.COLOR_BGR2HSV)[0][0]
-        lower_bound = np.array([hsv_color[0] - 10, 100, 100])
-        upper_bound = np.array([hsv_color[0] + 10, 255, 255])
-        selected_color = (lower_bound, upper_bound)
+        self.button = Button(self.frame, text='Select Image', command=self.load_image)
+        self.button.pack()
 
-def get_center(points):
-    x_coords = [p[0] for p in points]
-    y_coords = [p[1] for p in points]
-    center_x, center_y = int(sum(y_coords) / len(points))
-    return (center_x, center_y)
+        self.color_button = Button(self.frame, text='Color Selection', command=self.color_selection)
+        self.color_button.pack()
 
-def similarity_score(polygon_points, contour):
-    polygon = Polygon(polygon_points)
-    polygon_area = polygon.area
-    polygon_center = get_center(polygon_points)
+        self.canvas = None
+        self.image = None
 
-    contour_area = cv2.contourArea(contour)
-    moments = cv2.moments(contour)
-    contour_center = (int(moments['m10'] / moments['m00']), int(moments['m01'] / moments['m00']))
+    def load_image(self):
+        file_path = filedialog.askopenfilename()
+        self.image = cv2.imread(file_path)
 
-    area_difference = abs(polygon_area - contour_area) / max(polygon_area, contour_area)
-    center_distance = np.sqrt((polygon_center[0] - contour_center[0]) ** 2 + (polygon_center[1] - contour_center[1]) ** 2)
+        if self.image is not None:
+            self.display_image()
 
-    score = 0.5 * area_difference + 0.5 * center_distance
-    return score
+    def color_selection(self):
+        self.color_mode = not self.color_mode
+        if self.color_mode:
+            self.color_button.config(text='Exit Color Selection')
 
-def evaluate_similarity(points, contours):
-    best_score = float('inf')
-    best_contour = None
+            # Initialize color boundaries to white
+            self.color_lower = np.array([255, 255, 255])
+            self.color_upper = np.array([255, 255, 255])
+        else:
+            self.color_button.config(text='Color Selection')
 
-    for contour in contours:
-        hull = cv2.convexHull(contour)
-        approx = cv2.approxPolyDP(hull, 0.03 * cv2.arcLength(hull, True), True)
-        if len(approx) == 4 and cv2.contourArea(approx) > 400:
-            score = similarity_score(points, approx)
-            if score < best_score:
-                best_score = score
-                best_contour = approx
+    def click_event(self, event):
+        if len(self.points) < 4:
+            x, y = event.x, event.y
+            self.points.append((x, y))
+            if len(self.points) == 1:
+                cv2.circle(self.image, (x, y), 5, (0, 255, 0), -1)
+                self.display_image()
 
-    return best_score, best_contour
+        if self.color_mode and self.image is not None:
+            h, w, _ = self.image.shape
+            x, y = int(event.x * w / self.canvas.winfo_width()), int(event.y * h / self.canvas.winfo_height())
+            color = self.image[y, x, :]
 
-image = cv2.imread('test.jpg')
-cv2.namedWindow("image")
-cv2.setMouseCallback("image", mouse_event)
+            # Update color boundaries
+            self.color_lower = np.minimum(self.color_lower, color)
+            self.color_upper = np.maximum(self.color_upper, color)
 
-while True:
-    cv2.imshow("image", image)
-    key = cv2.waitKey(1) & 0xFF
+            # Apply color mask
+            mask = cv2.inRange(self.image, self.color_lower, self.color_upper)
+            self.image = cv2.bitwise_and(self.image, self.image, mask=mask)
+            self.display_image()
 
-    if key == ord('q'):
-        break
+    def display_image(self):
+        b,g,r = cv2.split(self.image)
+        img = cv2.merge((r,g,b))
+        im = Image.fromarray(img)
+        imgtk = ImageTk.PhotoImage(image=im)
+        self.image_label.imgtk = imgtk
+        self.image_label.configure(image=imgtk)
 
-    elif key == ord('p'):
-        mode = "point"
+    def get_center(self, points):
+        x_coords = [p[0] for p in points]
+        y_coords = [p[1] for p in points]
+        center_x = int(sum(x_coords) / len(points))
+        center_y = int(sum(y_coords) / len(points))
+        return (center_x, center_y)
 
-    elif key == ord('c'):
-        mode = "color"
+    def similarity_score(self, polygon_points, contour):
+        polygon = Polygon(polygon_points)
+        polygon_area = polygon.area
+        polygon_center = self.get_center(polygon_points)
 
-    if len(points) == 4:
-        blur_params = [1, 3, 5, 7, 9]
-        thresh_params = range(0, 256, 2)
+        contour_area = cv2.contourArea(contour)
+        moments = cv2.moments(contour)
+        contour_center = (int(moments['m10'] / moments['m00']), int(moments['m01'] / moments['m00']))
 
-        # check if 'cv_rev' directory exists, if not, create one
-        if not os.path.exists('cv_rev'):
-            os.makedirs('cv_rev')
+        area_difference = abs(polygon_area - contour_area) / max(polygon_area, contour_area)
+        center_distance = np.sqrt((polygon_center[0] - contour_center[0]) ** 2 + (polygon_center[1] - contour_center[1]) ** 2)
 
-        scores = []
-        for blur_param in blur_params:
-            all_scores = []
-            for thresh_param in thresh_params:
-                blur = cv2.GaussianBlur(image, (blur_param, blur_param), 0)
-                gray = cv2.cvtColor(blur, cv2.COLOR_BGR2GRAY)
+        score = 0.5 * area_difference + 0.5 * center_distance
+        return score
 
-                _, threshold = cv2.threshold(gray, thresh_param, 255, cv2.THRESH_BINARY)
+    def evaluate_similarity(self, points, contours):
+        best_score = float('inf')
+        best_contour = None
 
-                contours, _ = cv2.findContours(threshold, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in contours:
+            # 使用凸包来补全轮廓
+            hull = cv2.convexHull(contour)
 
-                score, _ = evaluate_similarity(points, contours)
-                all_scores.append(score)
+            # 多边形逼近
+            approx = cv2.approxPolyDP(hull, 0.03 * cv2.arcLength(hull, True), True)
 
-            scores.append(all_scores)
+            # 检查逼近后的轮廓是否有四个顶点并且面积大于400
+            if len(approx) == 4 and cv2.contourArea(approx) > 400:
+                score = self.similarity_score(points, approx)
+                if score < best_score:
+                    best_score = score
+                    best_contour = approx
 
-            # save the contour image
-            temp_image = gray.copy()
-            temp_image = cv2.cvtColor(temp_image, cv2.COLOR_GRAY2BGR)
-            for point in points:
-                cv2.circle(temp_image, point, 5, (0, 255, 0), -1)
-            param_text = f"blur_param: {blur_param}"
-            cv2.putText(temp_image, param_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-            cv2.imwrite(f"cv_rev/image_{blur_param}.jpg", temp_image)
+        return best_score, best_contour
 
-        # Plot similarity scores
-        plt.figure()
-        for i in range(len(blur_params)):
-            plt.plot(list(thresh_params), scores[i], label=f"blur_param: {blur_params[i]}")
-        plt.xlabel('Threshold')
-        plt.ylabel('Similarity Score')
-        plt.title('Similarity Score vs. Threshold')
-        plt.legend()
-        plt.savefig("cv_rev/similarity_scores.jpg")
-        plt.show()
-
-        break
-
-cv2.destroyAllWindows()
-
+if __name__ == '__main__':
+    root = Tk()
+    ImageProcessor(root)
+    root.mainloop()

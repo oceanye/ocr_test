@@ -2,18 +2,30 @@ import cv2
 import os
 import datetime
 
+print(cv2.getBuildInformation())
 # 创建存储视频的文件夹
 record_folder = "record"
 if not os.path.exists(record_folder):
     os.makedirs(record_folder)
 
+
+
 # 打开摄像头
 cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
-# 设置视频流的分辨率和帧率
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-cap.set(cv2.CAP_PROP_FPS, 30)
+if cap.isOpened():
+    # 设置视频流的分辨率和帧率
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_FPS, 10)
+
+
+
+else:
+    #通过cv2打开2023-06-07-11-46-14.mp4
+
+    cap = cv2.videocapture('2023-06-07-11-46-14.mp4', cv2.CAP_DSHOW)
+
 
 # 视频编码器
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')

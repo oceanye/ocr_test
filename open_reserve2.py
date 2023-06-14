@@ -5,7 +5,6 @@ import os
 import matplotlib.pyplot as plt
 
 points = []
-scores = []
 
 def click_event(event, x, y, flags, params):
     global image
@@ -56,7 +55,7 @@ def evaluate_similarity(points, contours):
 
     return best_score, best_contour
 
-image = cv2.imread('test.jpg')
+image = cv2.imread('test3.jpg')
 cv2.namedWindow("image")
 cv2.setMouseCallback("image", click_event)
 
@@ -67,56 +66,47 @@ while True:
         break
 
     if len(points) == 4:
-        blur_param = 1
+        blur_params = [1, 3, 5, 7, 9]
         thresh_params = range(0, 256, 2)
 
         # 检查是否存在名为 cv_rev 的文件夹，如果不存在，就新建一个
         if not os.path.exists('cv_rev'):
             os.makedirs('cv_rev')
 
-        while blur_param < 10:
-            blur = cv2.GaussianBlur(image, (blur_param, blur_param), 0)
-            gray = cv2.cvtColor(blur, cv2.COLOR_BGR2GRAY)
-
-            best_score = float('inf')
-            best_contour = None
-
+        scores = []
+        for blur_param in blur_params:
+            all_scores = []
             for thresh_param in thresh_params:
+                blur = cv2.GaussianBlur(image, (blur_param, blur_param), 0)
+                gray = cv2.cvtColor(blur, cv2.COLOR_BGR2GRAY)
+
                 _, threshold = cv2.threshold(gray, thresh_param, 255, cv2.THRESH_BINARY)
 
                 contours, _ = cv2.findContours(threshold, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-                score, contour = evaluate_similarity(points, contours)
-                if score < best_score:
-                    best_score = score
-                    best_contour = contour
+                score, _ = evaluate_similarity(points, contours)
+                all_scores.append(score)
 
-                # 保存轮廓图片
-                temp_image = gray.copy()
-                temp_image = cv2.cvtColor(temp_image, cv2.COLOR_GRAY2BGR)
-                for point in points:
-                    cv2.circle(temp_image, point, 5, (0, 255, 0), -1)
-                if best_contour is not None:
-                    cv2.drawContours(temp_image, [best_contour], -1, (0, 255, 0), 2)
-                param_text = f"blur_param: {blur_param}, thresh_param: {thresh_param}, score: {best_score:.2f}"
-                cv2.putText(temp_image, param_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-                cv2.imwrite(f"cv_rev/image_{blur_param}_{thresh_param}_score_{best_score:.2f}.jpg", temp_image)
+            scores.append(all_scores)
 
-                scores.append(best_score)
+            # 保存轮廓图片
+            temp_image = gray.copy()
+            temp_image = cv2.cvtColor(temp_image, cv2.COLOR_GRAY2BGR)
+            for point in points:
+                cv2.circle(temp_image, point, 5, (0, 255, 0), -1)
+            param_text = f"blur_param: {blur_param}"
+            cv2.putText(temp_image, param_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+            cv2.imwrite(f"cv_rev/image_{blur_param}.jpg", temp_image)
 
-            blur_param += 2  # 确保 blur_param 总是奇数
-
-            if best_score < 0.8:
-                break
-
-        print('满足相似度要求，终止循环')
-        print('最终的参数设置是：', 'blur_param:', blur_param-2, ', thresh_param:', thresh_param)
-
-        # 绘制相似度分数曲线图
-        plt.plot(list(thresh_params), scores)
+        # 绘制相似度分数曲线
+        plt.figure()
+        for i in range(len(blur_params)):
+            plt.plot(list(thresh_params), scores[i], label=f"blur_param: {blur_params[i]}")
         plt.xlabel('Threshold')
         plt.ylabel('Similarity Score')
         plt.title('Similarity Score vs. Threshold')
+        plt.legend()
+        plt.savefig("cv_rev/similarity_scores.jpg")
         plt.show()
 
         break
