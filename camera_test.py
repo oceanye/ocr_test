@@ -8,6 +8,20 @@ import numpy as np
 import datetime
 import os
 import matplotlib.pyplot as plt
+
+import ocr_clip
+from tkinter import Tk, filedialog
+
+import logging
+
+# 配置日志输出格式
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s')
+
+# 设置日志级别为info
+logging.getLogger().setLevel(logging.CRITICAL)
+
+
+
 from pytesseract import pytesseract
 
 camera_on = False
@@ -19,13 +33,16 @@ if camera_on:
     cap.open(0, cv2.CAP_DSHOW)
 
     # 设置视频流的分辨率和帧率
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-    cap.set(cv2.CAP_PROP_FPS, 10)
+    #cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    #cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    #cap.set(cv2.CAP_PROP_FPS, 10)
     print("camera open")
 
 else:
-    cap = cv2.VideoCapture('test.mp4')
+
+    # 打开文件选择框
+    file_path = filedialog.askopenfilename()
+    cap = cv2.VideoCapture(file_path)
     print("video open")
 
 
@@ -33,14 +50,14 @@ def get_angle(pt1, pt2):
     # 计算两个点之间的角度
     x_diff = pt2[0] - pt1[0]
     y_diff = pt2[1] - pt1[1]
-    #print("x_diff:",x_diff)
-    #print("y_diff:",y_diff)
+    logging.info("x_diff:"+str(x_diff))
+    logging.info("y_diff:"+str(y_diff))
     return np.degrees(np.arctan2(y_diff, x_diff))
 
 def is_parallel(angle1, angle2, tolerance):
     # 判断两个角度是否平行
     angle_diff = np.abs(angle1 - angle2)
-    #print("angle_diff:",angle_diff)
+    logging.info("angle_diff:"+str(angle_diff))
     if angle_diff <= tolerance or angle_diff >= 180 - tolerance:
         return True
     else:
@@ -53,7 +70,7 @@ def parallel_quar(contour, tolerance=5):
     points=contour.reshape(-1,2)
 
 
-    #print("contour:",points)
+
 
     angle1 = get_angle(points[0], points[1])
     angle2 = get_angle(points[3], points[2])
@@ -61,10 +78,10 @@ def parallel_quar(contour, tolerance=5):
     angle3 = get_angle(points[1], points[2])
     angle4 = get_angle(points[0], points[3])
 
-    #print("angle1:",angle1)
-    #print("angle2:",angle2)
-    #print("angle3:",angle3)
-    #print("angle4:",angle4)
+    #logging.info("angle1:"+str(angle1))
+    #logging.info("angle2:"+str(angle2))
+    #logging.info("angle3:"+str(angle3))
+    #logging.info("angle4:"+str(angle4))
 
     if is_parallel(angle1, angle2, tolerance) and is_parallel(angle3, angle4, tolerance):
         return contour
@@ -155,8 +172,8 @@ def ocr(image):
         cv2.putText(image, result, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
 
     # 显示二值化结果和识别结果
-    cv2.imshow('Binary Image', binary)
-    cv2.imshow('OCR Result', image)
+    #cv2.imshow('Binary Image', binary)
+    #cv2.imshow('OCR Result', image)
 
     # 等待用户按下空格键
     while cv2.waitKey(0) != ord(' '):
@@ -200,7 +217,28 @@ def is_point_inside_contour(contour, point):
     return result >= 0
 
 
+def remove_similar_contours(contours, max_distance):
+    filtered_contours = []
 
+    for contour in contours:
+        is_similar = False
+
+        for other_contour in filtered_contours:
+            center1, _ = cv2.minEnclosingCircle(contour)
+            #center1 = contour.mean(axis=0)
+            center2, _ = cv2.minEnclosingCircle(other_contour)
+            #center2 = other_contour.mean(axis=0)
+
+            distance = np.linalg.norm(np.array(center1) - np.array(center2))
+
+            if distance < max_distance:
+                is_similar = True
+                break
+
+        if not is_similar:
+            filtered_contours.append(contour)
+
+    return filtered_contours
 
 # 计时器类
 class FPSCounter:
@@ -223,6 +261,35 @@ class FPSCounter:
         return fps
 
 
+def filter_contours(contours):
+    filtered_contours = []
+    global frame_shown
+    for contour in contours:
+
+        hull = cv2.convexHull(contour)
+        # 进行多边形逼近，将轮廓近似为较少的顶点
+        approx = cv2.approxPolyDP(hull, 0.1 * cv2.arcLength(hull, True), True)
+
+        #调试边缘识别结果
+        #cv2.drawContours(frame_shown, [approx], -1, (0, 255, 0), 2)
+
+        if len(approx) == 4 :
+            area = cv2.contourArea(approx)
+            if area >= 5000 and area < 50000 and cv2.isContourConvex(approx):
+
+
+                #判断对边平行与否
+                # print("---------"+str(count)+"-----------")
+                parallel_approx = parallel_quar(approx, 10)
+
+                if (parallel_approx is None):
+                    continue
+
+                filtered_contours.append(parallel_approx)
+
+        #是否打开 相近多边形的合并
+        #filtered_contours = remove_similar_contours(filtered_contours, 10)
+    return filtered_contours
 #-------------------------------
 pic_folder = "pic_folder"
 if not os.path.exists(pic_folder):
@@ -242,7 +309,7 @@ if not os.path.exists(clip_folder):
 
 ret, frame = cap.read()
 
-
+f_height, f_width, _ = frame.shape
 
 
 # 创建窗口并显示第一帧图像
@@ -251,21 +318,23 @@ frame = cv2.rotate(frame, cv2.ROTATE_180)
 cv2.imshow('Video', frame)
 
 
-pmx,pmy = 0,0
-# 设置鼠标回调函数
-cv2.setMouseCallback('Video', mouse_callback)
+pmx,pmy = 964, 501
+mouse_mode = True
+if mouse_mode == True :
+    # 设置鼠标回调函数
+    cv2.setMouseCallback('Video', mouse_callback)
 
 
-# 等待鼠标点击或20秒等待期结束
-is_clicked = False
-timer = threading.Timer(20.0, lambda: None)
-timer.start()
-while not is_clicked and timer.is_alive():
-    if cv2.waitKey(1) == 27:  # 按下ESC键退出程序
-        break
+    # 等待鼠标点击或20秒等待期结束
+    is_clicked = False
+    timer = threading.Timer(20.0, lambda: None)
+    timer.start()
+    while not is_clicked and timer.is_alive():
+        if cv2.waitKey(1) == 27:  # 按下ESC键退出程序
+            break
 
-# 取消计时器
-timer.cancel()
+    # 取消计时器
+    timer.cancel()
 
 
 # 创建帧率统计器
@@ -292,96 +361,95 @@ while True:
     blurred_frame = cv2.GaussianBlur(gray_frame, (5, 5), 0)
 
     # 边缘检测
-    edges = cv2.Canny(blurred_frame, 0, 100)
+    edges = cv2.Canny(blurred_frame, 00, 50)
 
     # 寻找轮廓
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+    frame_shown = frame
+
+
     count = 0  # 计数器
 
-    for contour in contours:
-        # 进行多边形逼近，将轮廓近似为较少的顶点
-
-        hull = cv2.convexHull(contour)
-        approx = cv2.approxPolyDP(hull, 0.1 * cv2.arcLength(hull, True), True)
-
-        # 判断是否为非凹四边形
-        if len(approx) == 4 and cv2.isContourConvex(approx):
+    contours_f = filter_contours(contours)
 
 
-            #print("---------"+str(count)+"-----------")
-            parallel_approx=parallel_quar(approx,5)
+    for contour in contours_f:
 
-            if(parallel_approx is None):
-                continue
 
-            area = cv2.contourArea(parallel_approx)
 
-            frame_shown = frame
-            #cv2.drawContours(frame, [hull], 0, (255, 0, 0), 2)
-            # 判断面积是否大于等于20x20像素
-            if area >= 5000 and area < 50000:
-                # 绘制轮廓
+        parallel_approx = contour
 
-                cv2.drawContours(frame_shown, [parallel_approx], 0, (0, 240, 0), 2)
 
-                # 获取中心点坐标
-                M = cv2.moments(parallel_approx)
-                cX = int(M["m10"] / M["m00"])
-                cY = int(M["m01"] / M["m00"])
+        area = cv2.contourArea(parallel_approx)
 
-                cv2.putText(frame_shown, str(count), (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
-                # 切割四边形区域并保存为图像文件
-                now = datetime.datetime.now()
-                filename = "{}-{}-{}-{}-{}-{}-{}-{}".format(now.year, now.month, now.day, now.hour, now.minute,
-                                                                now.second, now.microsecond, count)
-                filepath = os.path.join(clip_folder, filename)
 
-                # 裁剪四边形区域并保存为图像文件
+        # 绘制轮廓
 
-                x, y, w, h = cv2.boundingRect(parallel_approx)
-                clip = frame_copy[y:y + h, x:x + w]
-                #将x,y,w,h 生成dst_bound
-                dst_bound = np.float32([[0,0], [0,  h], [w, h], [w, 0]])
+        cv2.drawContours(frame_shown, [parallel_approx], 0, (0, 240, 0), 2)
 
-                src_bound = parallel_approx.reshape(-1, 2)
-                src_bound = sort_coordinates(src_bound)
-                #src_bound是[x,y]的4个点坐标，按顺时针排序，左上角开始
+        # 获取中心点坐标
+        M = cv2.moments(parallel_approx)
+        cX = int(M["m10"] / M["m00"])
+        cY = int(M["m01"] / M["m00"])
 
-                #print("src_bound:",src_bound)
-                #print("dst_bound:",dst_bound)
-                transform_matrix = cv2.getPerspectiveTransform(src_bound,dst_bound )
-                clip_correct = cv2.warpPerspective(clip, transform_matrix, (w, h))
+        cv2.putText(frame_shown, str(count), (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
-                #cv2.imwrite(filepath + ".png", clip)
-                #cv2.imwrite(filepath + "-correct" + ".png", clip_correct)
-                #print("parallel_approx:",parallel_approx)
-                #print("pmx,pmy:",pmx,pmy)
-                in_contour = is_point_inside_contour(parallel_approx, (pmx, pmy))
+        # 切割四边形区域并保存为图像文件
+        now = datetime.datetime.now()
+        filename = "{}-{}-{}-{}-{}-{}-{}-{}".format(now.year, now.month, now.day, now.hour, now.minute,
+                                                        now.second, now.microsecond, count)
+        filepath = os.path.join(clip_folder, filename)
 
-                if (pmx+pmy) == 0 or in_contour:
-                    #ocr_text = ocr_percent(clip_correct)
-                    ocr_text = ""
-                    print(ocr_text)
+        # 裁剪四边形区域并保存为图像文件
 
-                    cv2.imwrite(filepath+"-correct "+ocr_text+".png", clip_correct)
+        x, y, w, h = cv2.boundingRect(parallel_approx)
+        clip = frame_copy[y:y + h, x:x + w]
+        #将x,y,w,h 生成dst_bound
+        dst_bound = np.float32([[0,0], [0,  h], [w, h], [w, 0]])
 
-                    cv2.drawContours(frame_shown, [parallel_approx], 0, ( 0,0, 255), 2)
-                    fps_counter.update(True)
-                    # 打印当前帧率
-                    fps = round(fps_counter.get_fps(),2)
-                    #print("帧率:", fps)
+        src_bound = parallel_approx.reshape(-1, 2)
+        src_bound = sort_coordinates(src_bound)
+        #src_bound是[x,y]的4个点坐标，按顺时针排序，左上角开始
 
-                cv2.putText(frame_shown, "FPS:"+str(fps), (1000, 50), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 2)
-                count += 1
+        #print("src_bound:",src_bound)
+        #print("dst_bound:",dst_bound)
+        transform_matrix = cv2.getPerspectiveTransform(src_bound,dst_bound )
+        clip_correct = cv2.warpPerspective(clip, transform_matrix, (w, h))
+
+        #cv2.imwrite(filepath + ".png", clip)
+        #cv2.imwrite(filepath + "-correct" + ".png", clip_correct)
+        #print("parallel_approx:",parallel_approx)
+        #print("pmx,pmy:"+pmx+","+pmy)
+        in_contour = is_point_inside_contour(parallel_approx, (pmx, pmy))
+
+        if (pmx+pmy) == 0 or in_contour:
+            #ocr_text = ocr_percent(clip_correct)
+            ocr_text = ""
+            print(ocr_text)
+            fn_correct = filepath+"-correct "+ocr_text+".png"
+            cv2.imwrite(fn_correct, clip_correct)
+
+            ocr_clip.ocr_clip(fn_correct)
+
+            cv2.drawContours(frame_shown, [parallel_approx], 0, ( 0,0, 255), 2)
+            fps_counter.update(True)
+            # 打印当前帧率
+            fps = round(fps_counter.get_fps(),2)
+            logging.info("帧率:"+str(fps))
+
+
+
+        cv2.putText(frame_shown, "FPS:"+str(fps), (round(f_width*0.75/10)*10,100), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 2)
+        count += 1
 
 
     # 保存当前帧到screenshot_folder
     screenshot_filename = "screenshot_{:06d}.png".format(int(cap.get(cv2.CAP_PROP_POS_FRAMES)))
 
     screenshot_filepath = os.path.join(screenshot_folder, screenshot_filename)
-    cv2.imwrite(screenshot_filepath, frame)
+    cv2.imwrite(screenshot_filepath, frame_shown)
 
     # 显示处理后的图像
     cv2.imshow('Frame', frame_shown)
