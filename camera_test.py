@@ -9,10 +9,12 @@ import datetime
 import os
 import matplotlib.pyplot as plt
 
-import ocr_clip
+#from ocr_clip import ocr_clip_img
 from tkinter import Tk, filedialog
 
 import logging
+
+import ocr_clip
 
 # 配置日志输出格式
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s')
@@ -22,7 +24,7 @@ logging.getLogger().setLevel(logging.CRITICAL)
 
 
 
-from pytesseract import pytesseract
+from pytesseract import pytesseract, image_to_string
 
 camera_on = False
 
@@ -63,7 +65,7 @@ def is_parallel(angle1, angle2, tolerance):
     else:
         return False
 
-def parallel_quar(contour, tolerance=5):
+def parallel_quar(contour, tolerance=10):
     #rect = cv2.minAreaRect(contour)
     #box = cv2.boxPoints(contour)
     #获得变量contour的点坐标，存成list
@@ -267,13 +269,17 @@ def filter_contours(contours):
     for contour in contours:
 
         hull = cv2.convexHull(contour)
+
+
         # 进行多边形逼近，将轮廓近似为较少的顶点
-        approx = cv2.approxPolyDP(hull, 0.1 * cv2.arcLength(hull, True), True)
+        approx = cv2.approxPolyDP(hull, 0.05 * cv2.arcLength(hull, True), True)
 
         #调试边缘识别结果
         #cv2.drawContours(frame_shown, [approx], -1, (0, 255, 0), 2)
 
         if len(approx) == 4 :
+            # 调试四边形识别结果
+            #cv2.drawContours(frame_shown, [approx], -1, (0, 255, 0), 2)
             area = cv2.contourArea(approx)
             if area >= 5000 and area < 50000 and cv2.isContourConvex(approx):
 
@@ -290,6 +296,191 @@ def filter_contours(contours):
         #是否打开 相近多边形的合并
         #filtered_contours = remove_similar_contours(filtered_contours, 10)
     return filtered_contours
+
+
+
+
+
+def proj_split(binary, threshold, direction):
+    b_height , b_width = binary.shape
+
+    #建立morphologyex结构元素
+    if direction == "vertical":
+        structure_element = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 3))
+    else:
+        structure_element = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 2))
+    #闭运算
+    closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, structure_element)
+
+    cv2.imshow("textimg", closed)
+
+    # 沿垂直方向统计
+    if direction =="vertical":
+        projection = np.sum(closed, axis=1)
+    else:
+        projection = np.sum(closed, axis=0)
+
+    projection_edge= 0 #round(len(projection)*0.1)
+    projection_start = projection_edge
+    projection_end = len(projection) - projection_edge
+    min_projection = np.min(projection[projection_start:projection_end])
+    threshold = min_projection*1.5+1
+    # 找到小于阈值的区域
+    split_regions = []
+    start = 0
+    for i in range(projection_start, projection_end):
+        if projection[i] < threshold and projection[i-1] >= threshold:
+            start = i
+        elif projection[i] >= threshold and projection[i-1] < threshold:
+            end = i
+            split_regions.append((start, end))
+
+    # 获取划分区域的中点坐标
+    split_points_mid = [int((start + end) / 2) for start, end in split_regions]
+    split_points_mid.insert(0, projection_start)
+    split_points_mid.append(projection_end)
+
+     #split_points_mid.append(b_height)
+    i = len(split_points_mid) - 1
+    while i > 0:
+        if split_points_mid[i] - split_points_mid[i - 1] < 10:
+            split_points_mid.pop(i)
+        i -= 1
+
+    #split_points_mid升序排列
+    #split_points_mid.sort()
+
+    # 绘制统计图像
+    plt_on = False
+    if plt_on:
+        if direction =="vertical":
+            plt.plot(projection, range(len(projection)))
+            # 绘制一条直线，X坐标在threshold处
+            plt.plot([threshold] * len(projection), range(len(projection)))
+            plt.xlabel('Pixel Sum')
+            plt.ylabel('Y-coordinate')
+        else:
+            plt.plot(range(len(projection)),projection)
+            # 绘制一条直线，Y坐标在threshold处
+            plt.plot(range(len(projection)), [threshold] * len(projection))
+            plt.xlabel('X-coordinate')
+            plt.ylabel('Pixel Sum')
+
+
+        plt.show()
+        filename = str(random.randint(1000000, 9999999)) + '.png'
+        plt.savefig(filename)
+
+
+    return split_points_mid
+
+
+def split_image(img, split_y, split_x):
+    regions = []
+    for i in range(len(split_y)-1):
+        for j in range(len(split_x)-1):
+            region = img[split_y[i]:split_y[i+1], split_x[j]:split_x[j+1]]
+            regions.append(region)
+    return regions
+
+def compute_binary_sum(regions):
+    binary_sums = []
+    for region in regions:
+        _, binary = cv2.threshold(region, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        binary_sum = np.sum(binary)
+        binary_sums.append(binary_sum)
+    return binary_sums
+
+def save_regions(file_path,regions, binary_sums):
+
+    value = []
+    binary_sums_sort = sorted(binary_sums, reverse=True)
+    max_binary = binary_sums_sort[:3]
+
+
+    # 根据binary_sums 对regions进行排序，取region前三个
+    regions_sort = []
+    for i in range(len(max_binary)):
+        index = binary_sums.index(max_binary[i])
+        regions_sort.append(index)
+
+
+    file_name = os.path.basename(file_path)
+    fn_parent = os.path.dirname(os.path.dirname(file_path))
+
+    for i in range(len(regions)):#"#regions_sort:
+        region = regions[i]
+        #binary_sum = binary_sums[i]
+
+        # 将region turn black to white
+        region = cv2.bitwise_not(region)
+        #rst = "v="+pytesseract.image_to_string(region, lang='eng')
+        rst = image_to_string(region, lang='eng',config='--psm 10 --oem 3 -c tessedit_char_whitelist=0123456789')
+        str(rst).replace("%","")
+        print("v="+rst)
+        value.append(rst)
+        if True:
+            fn=fn_parent+"//ocr//"+file_name.split('.')[0]+f"-region_{i+1}"+".png"
+            cv2.imwrite(fn, region)
+
+
+    #value转换为1个数值
+    value = "".join(value)
+    #如果value非空，转换为数值
+
+    if value != "":
+        value = int(value.replace("\n",""))
+    print("value = ", value)
+def fill_disconnected_regions(binary_image):
+    # 进行连通组件标记
+    retval, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_image)
+
+    # 获取标记图像中像素值为1的区域（即不连续的部分）
+    disconnected_regions = (labels == 1).astype('uint8')
+
+    # 使用膨胀操作补足不连续的部分
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))  # 可根据需要调整结构元素的大小
+    reconnected_regions = cv2.dilate(disconnected_regions, kernel, iterations=1)
+
+    # 将补足后的区域与原始图像进行融合
+    result = cv2.bitwise_or(binary_image, reconnected_regions)
+
+    return result
+
+
+def ocr_clip_img(image,fn_path):
+    #fn, _ = os.path.splitext(file_path2)
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    _,binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    #split_y = proj_split(binary, binary.shape[1]*5, "vertical")
+    #print("split_y:",split_y)
+    split_x = proj_split(binary, binary.shape[0]*5, "horizontal")
+    print("split_x:",split_x)
+
+    #for y in split_y:
+    #    cv2.line(gray, (0, y), (binary.shape[1], y), (0, 0, 255), 1)  # 线条颜色为红色
+
+    # 在image上绘制水平线
+    for x in split_x:
+        cv2.line(gray, (x, 0), (x, binary.shape[0]), (0, 0, 255), 1)  # 线条颜色为红色
+
+    split_image_on = False
+
+    if split_image_on:
+        cv2.imshow("image",gray)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+    cv2.imwrite(fn_path+'-split.png', image)
+
+    regions=split_image(binary, [0,300], split_x)
+    binary_sum = compute_binary_sum(regions)
+    save_regions(fn_path,regions, binary_sum)
+
+
+
 #-------------------------------
 pic_folder = "pic_folder"
 if not os.path.exists(pic_folder):
@@ -306,6 +497,9 @@ if not os.path.exists(clip_folder):
     os.makedirs(clip_folder)
 
 
+ocr_folder = os.path.join(pic_folder, "ocr")
+if not os.path.exists(ocr_folder):
+    os.makedirs(ocr_folder)
 
 ret, frame = cap.read()
 
@@ -360,13 +554,24 @@ while True:
     # 图像平滑处理
     blurred_frame = cv2.GaussianBlur(gray_frame, (5, 5), 0)
 
+    frame_shown = frame
+
     # 边缘检测
-    edges = cv2.Canny(blurred_frame, 00, 50)
+    edges = cv2.Canny(blurred_frame, 0, 20)
+
+
+
 
     # 寻找轮廓
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    frame_shown = frame
+    #删除contours中面积小于400的轮廓
+    contours = [contour for contour in contours if cv2.contourArea(contour) < 400]
+    
+    #检测到的轮廓数量
+    #cv2.drawContours(frame_shown, contours, 0, (255, 0, 0), 2)
+
+
 
 
     count = 0  # 计数器
@@ -398,14 +603,18 @@ while True:
 
         # 切割四边形区域并保存为图像文件
         now = datetime.datetime.now()
-        filename = "{}-{}-{}-{}-{}-{}-{}-{}".format(now.year, now.month, now.day, now.hour, now.minute,
-                                                        now.second, now.microsecond, count)
+        filename = "{}-{}-{}-{}-{}-{}".format(now.month, now.day, now.hour, now.minute,
+                                                        now.second, count)
         filepath = os.path.join(clip_folder, filename)
+
+
+        filepath_ocr = os.path.join(ocr_folder, filename)
 
         # 裁剪四边形区域并保存为图像文件
 
         x, y, w, h = cv2.boundingRect(parallel_approx)
         clip = frame_copy[y:y + h, x:x + w]
+
         #将x,y,w,h 生成dst_bound
         dst_bound = np.float32([[0,0], [0,  h], [w, h], [w, 0]])
 
@@ -418,6 +627,13 @@ while True:
         transform_matrix = cv2.getPerspectiveTransform(src_bound,dst_bound )
         clip_correct = cv2.warpPerspective(clip, transform_matrix, (w, h))
 
+        # 统一裁剪区域大小
+        clip_resize = cv2.resize(clip_correct, (350, 120), interpolation=cv2.INTER_CUBIC)
+
+        #去除边框
+        clip_final = clip_resize[10:110,35:335]
+
+
         #cv2.imwrite(filepath + ".png", clip)
         #cv2.imwrite(filepath + "-correct" + ".png", clip_correct)
         #print("parallel_approx:",parallel_approx)
@@ -426,12 +642,12 @@ while True:
 
         if (pmx+pmy) == 0 or in_contour:
             #ocr_text = ocr_percent(clip_correct)
-            ocr_text = ""
-            print(ocr_text)
-            fn_correct = filepath+"-correct "+ocr_text+".png"
-            cv2.imwrite(fn_correct, clip_correct)
+            #ocr_text = ""
+            #print(ocr_text)
+            fn_final = filepath+"-correct"
+            cv2.imwrite(fn_final+".png", clip_final)
 
-            ocr_clip.ocr_clip(fn_correct)
+            ocr_clip_img(clip_final,filepath)
 
             cv2.drawContours(frame_shown, [parallel_approx], 0, ( 0,0, 255), 2)
             fps_counter.update(True)
