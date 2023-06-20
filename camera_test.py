@@ -2,6 +2,7 @@ import copy
 import math
 import threading
 import time
+from random import random
 
 import cv2
 import numpy as np
@@ -393,7 +394,7 @@ def compute_binary_sum(regions):
 
 def save_regions(file_path,regions, binary_sums):
 
-    value = []
+    rst = []
     binary_sums_sort = sorted(binary_sums, reverse=True)
     max_binary = binary_sums_sort[:3]
 
@@ -409,28 +410,34 @@ def save_regions(file_path,regions, binary_sums):
     fn_parent = os.path.dirname(os.path.dirname(file_path))
 
     for i in range(len(regions)):#"#regions_sort:
+
         region = regions[i]
         #binary_sum = binary_sums[i]
 
         # 将region turn black to white
         region = cv2.bitwise_not(region)
         #rst = "v="+pytesseract.image_to_string(region, lang='eng')
-        rst = image_to_string(region, lang='eng',config='--psm 10 --oem 3 -c tessedit_char_whitelist=0123456789')
-        str(rst).replace("%","")
-        print("v="+rst)
-        value.append(rst)
+        #if np.sum(region)>1000:
+        if i == 1 or i==2:
+            rst1 = image_to_string(region, lang='eng',config='--psm 10 --oem 3 -c tessedit_char_whitelist=0123456789')
+        else:
+            rst1 = ''
+        str(rst1).replace("%","")
+        print("v="+rst1)
+        logging.info("v="+rst1)
+        rst.append(rst1)
         if True:
             fn=fn_parent+"//ocr//"+file_name.split('.')[0]+f"-region_{i+1}"+".png"
             cv2.imwrite(fn, region)
 
 
     #value转换为1个数值
-    value = "".join(value)
+    value = "".join(rst)
+    #value = value.replace("\n","")
     #如果value非空，转换为数值
+    value = str2int(value)
 
-    if value != "":
-        value = int(value.replace("\n",""))
-    print("value = ", value)
+    return value
 def fill_disconnected_regions(binary_image):
     # 进行连通组件标记
     retval, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_image)
@@ -447,40 +454,77 @@ def fill_disconnected_regions(binary_image):
 
     return result
 
+def str2int(rst):
+    try:
+        if rst != "":
+            #判断rst是否为int
+            value = int(rst.replace("\n",""))
 
+        if 10< value < 50:
+            return value
+    except:
+        return ""
 def ocr_clip_img(image,fn_path):
     #fn, _ = os.path.splitext(file_path2)
+
+    #统计当前函数运行时间
+    start = time.time()
+
 
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     _,binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    #split_y = proj_split(binary, binary.shape[1]*5, "vertical")
-    #print("split_y:",split_y)
-    split_x = proj_split(binary, binary.shape[0]*5, "horizontal")
-    print("split_x:",split_x)
 
-    #for y in split_y:
-    #    cv2.line(gray, (0, y), (binary.shape[1], y), (0, 0, 255), 1)  # 线条颜色为红色
+    # 先通过单字段识别两位整数，如果不在有效区域内，则进行拆分识别
 
-    # 在image上绘制水平线
-    for x in split_x:
-        cv2.line(gray, (x, 0), (x, binary.shape[0]), (0, 0, 255), 1)  # 线条颜色为红色
+    rst = image_to_string(binary,lang='eng',config='--psm 7 --oem 1' )
+    #rst只保留前两个char，判断是否小于40
+    rst = rst[:2]
+    value = str2int(rst)
 
-    split_image_on = False
+    if value != "":
+        end = time.time()
 
-    if split_image_on:
-        cv2.imshow("image",gray)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        print("ocr_clip_img string time:", end - start)
+        print ("字段检测成功 数值 = ", value)
 
-    cv2.imwrite(fn_path+'-split.png', image)
+        return value
+    else:
+        #拆分后识别
 
-    regions=split_image(binary, [0,300], split_x)
-    binary_sum = compute_binary_sum(regions)
-    save_regions(fn_path,regions, binary_sum)
+        #split_y = proj_split(binary, binary.shape[1]*5, "vertical")
+        #print("split_y:",split_y)
+        split_x = proj_split(binary, binary.shape[0]*5, "horizontal")
+        print("split_x:",split_x)
+
+        #for y in split_y:
+        #    cv2.line(gray, (0, y), (binary.shape[1], y), (0, 0, 255), 1)  # 线条颜色为红色
+
+        # 在image上绘制水平线
+        for x in split_x:
+            cv2.line(gray, (x, 0), (x, binary.shape[0]), (0, 0, 255), 1)  # 线条颜色为红色
+
+        split_image_on = False
+
+        if split_image_on:
+            cv2.imshow("image",gray)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+
+        cv2.imwrite(fn_path+'-split.png', image)
+
+        regions=split_image(binary, [0,300], split_x)
+        binary_sum = compute_binary_sum(regions)
+        value = save_regions(fn_path,regions, binary_sum)
+
+    #统计当前函数运行时间
+
+    end = time.time()
+    print("ocr_clip_img char time:",end-start)
+    print("单字符检测成功 数值 = ",value)
 
 
-
+    return value
 #-------------------------------
 pic_folder = "pic_folder"
 if not os.path.exists(pic_folder):
@@ -538,7 +582,10 @@ fps_counter = FPSCounter()
 fps_counter.start()
 fps = 0
 
+num=0
+
 while True:
+    num=num+1
     # 读取视频流的一帧
     ret, frame = cap.read()
 
@@ -567,7 +614,7 @@ while True:
 
     #删除contours中面积小于400的轮廓
     contours = [contour for contour in contours if cv2.contourArea(contour) < 400]
-    
+
     #检测到的轮廓数量
     #cv2.drawContours(frame_shown, contours, 0, (255, 0, 0), 2)
 
@@ -575,92 +622,168 @@ while True:
 
 
     count = 0  # 计数器
+    value = 0
 
     contours_f = filter_contours(contours)
 
-
     for contour in contours_f:
+        in_contour = is_point_inside_contour(contour, (pmx, pmy))
+        if in_contour:
+            break
+
+    if in_contour == True:
+
+
+        for contour in contours_f:
+
+
+            global parallel_approx
+
+            parallel_approx = contour
+
+
+            area = cv2.contourArea(parallel_approx)
 
 
 
-        parallel_approx = contour
+            # 绘制轮廓
+
+            #cv2.drawContours(frame_shown, [parallel_approx], 0, (0, 240, 0), 2)
+
+            # 获取中心点坐标
+            M = cv2.moments(parallel_approx)
+            cX = int(M["m10"] / M["m00"])
+            cY = int(M["m01"] / M["m00"])
+
+            # 标记当前轮廓的编号
+            # cv2.putText(frame_shown, str(count), (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+
+            # 切割四边形区域并保存为图像文件
+            now = datetime.datetime.now()
+            filename = "{}-{}-{}-{}-{}-{}".format(now.month, now.day, now.hour, now.minute,
+                                                            now.second, count)
+            filepath = os.path.join(clip_folder, filename)
 
 
-        area = cv2.contourArea(parallel_approx)
+            filepath_ocr = os.path.join(ocr_folder, filename)
 
 
 
-        # 绘制轮廓
 
-        cv2.drawContours(frame_shown, [parallel_approx], 0, (0, 240, 0), 2)
-
-        # 获取中心点坐标
-        M = cv2.moments(parallel_approx)
-        cX = int(M["m10"] / M["m00"])
-        cY = int(M["m01"] / M["m00"])
-
-        cv2.putText(frame_shown, str(count), (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-
-        # 切割四边形区域并保存为图像文件
-        now = datetime.datetime.now()
-        filename = "{}-{}-{}-{}-{}-{}".format(now.month, now.day, now.hour, now.minute,
-                                                        now.second, count)
-        filepath = os.path.join(clip_folder, filename)
+            #cv2.imwrite(filepath + ".png", clip)
+            #cv2.imwrite(filepath + "-correct" + ".png", clip_correct)
+            #print("parallel_approx:",parallel_approx)
+            #print("pmx,pmy:"+pmx+","+pmy)
+            in_contour = is_point_inside_contour(parallel_approx, (pmx, pmy))
 
 
-        filepath_ocr = os.path.join(ocr_folder, filename)
 
-        # 裁剪四边形区域并保存为图像文件
+            if (pmx+pmy) == 0 or in_contour:
 
-        x, y, w, h = cv2.boundingRect(parallel_approx)
-        clip = frame_copy[y:y + h, x:x + w]
+                # 裁剪四边形区域并保存为图像文件
+                global x,y,w,h  # 裁剪区域的坐标和宽高
+                x, y, w, h = cv2.boundingRect(parallel_approx)
+                clip = frame_copy[y:y + h, x:x + w]
 
-        #将x,y,w,h 生成dst_bound
-        dst_bound = np.float32([[0,0], [0,  h], [w, h], [w, 0]])
+                # 将x,y,w,h 生成dst_bound
+                dst_bound = np.float32([[0, 0], [0, h], [w, h], [w, 0]])
 
-        src_bound = parallel_approx.reshape(-1, 2)
-        src_bound = sort_coordinates(src_bound)
-        #src_bound是[x,y]的4个点坐标，按顺时针排序，左上角开始
+                src_bound = parallel_approx.reshape(-1, 2)
+                src_bound = sort_coordinates(src_bound)
+                # src_bound是[x,y]的4个点坐标，按顺时针排序，左上角开始
 
-        #print("src_bound:",src_bound)
-        #print("dst_bound:",dst_bound)
-        transform_matrix = cv2.getPerspectiveTransform(src_bound,dst_bound )
-        clip_correct = cv2.warpPerspective(clip, transform_matrix, (w, h))
+                # print("src_bound:",src_bound)
+                # print("dst_bound:",dst_bound)
+                global transform_matrix
 
-        # 统一裁剪区域大小
-        clip_resize = cv2.resize(clip_correct, (350, 120), interpolation=cv2.INTER_CUBIC)
+                transform_matrix = cv2.getPerspectiveTransform(src_bound, dst_bound)
+                clip_correct = cv2.warpPerspective(clip, transform_matrix, (w, h))
 
-        #去除边框
-        clip_final = clip_resize[10:110,35:335]
+                # 统一裁剪区域大小
+                clip_resize = cv2.resize(clip_correct, (350, 120), interpolation=cv2.INTER_CUBIC)
+
+                # 去除边框
+                clip_final = clip_resize[10:110, 35:335]
 
 
-        #cv2.imwrite(filepath + ".png", clip)
-        #cv2.imwrite(filepath + "-correct" + ".png", clip_correct)
-        #print("parallel_approx:",parallel_approx)
-        #print("pmx,pmy:"+pmx+","+pmy)
-        in_contour = is_point_inside_contour(parallel_approx, (pmx, pmy))
 
-        if (pmx+pmy) == 0 or in_contour:
-            #ocr_text = ocr_percent(clip_correct)
-            #ocr_text = ""
-            #print(ocr_text)
-            fn_final = filepath+"-correct"
-            cv2.imwrite(fn_final+".png", clip_final)
 
-            ocr_clip_img(clip_final,filepath)
+                #ocr_text = ocr_percent(clip_correct)
+                #ocr_text = ""
+                #print(ocr_text)
+                fn_final = filepath+"-correct"+str(num)
+                cv2.imwrite(fn_final+".png", clip_final)
 
-            cv2.drawContours(frame_shown, [parallel_approx], 0, ( 0,0, 255), 2)
-            fps_counter.update(True)
+                value= ocr_clip_img(clip_final,filepath)
+
+
+
+                cv2.drawContours(frame_shown, [parallel_approx], 0, ( 255,0, 0), 2)
+                # drawcontour 用虚线
+
+                #cv2 绘制矩形填充区域，颜色红色，透明度50%
+                #cv2.fillPoly(frame_shown, [parallel_approx], (0, 0, 255), 0.5)
+
+                fps_counter.update(True)
+                # 打印当前帧率
+                fps = round(fps_counter.get_fps(),2)
+                logging.info("帧率:"+str(fps))
+                logging.info("当前帧："+str(num))
+
+
+
+
+
+                #结束当前for循环
+                break
+            count += 1
+
+
+    else:
+
+        try:
+            # 裁剪四边形区域并保存为图像文件
+
+
+            clip = frame_copy[y:y + h, x:x + w]
+
+
+            clip_correct = cv2.warpPerspective(clip, transform_matrix, (w, h))
+
+            # 统一裁剪区域大小
+            clip_resize = cv2.resize(clip_correct, (350, 120), interpolation=cv2.INTER_CUBIC)
+
+            # 去除边框
+            clip_final = clip_resize[10:110, 35:335]
+
+            # ocr_text = ocr_percent(clip_correct)
+            # ocr_text = ""
+            # print(ocr_text)
+            fn_final = filepath + "-fake"+str(num)
+            cv2.imwrite(fn_final + ".png", clip_final)
+
+            value = ocr_clip_img(clip_final,filepath)
+
+
+
+            cv2.drawContours(frame_shown, [parallel_approx], 0, (0, 0, 255), 2)
+
+
+            fps_counter.update(False)
             # 打印当前帧率
-            fps = round(fps_counter.get_fps(),2)
-            logging.info("帧率:"+str(fps))
+            fps = round(fps_counter.get_fps(), 2)
+            logging.info("帧率:" + str(fps))
+            logging.info("当前帧："+str(num))
+        except:
+            pass
+
+    cv2.putText(frame_shown, "FPS:" + str(fps), (round(f_width * 0.75 / 10) * 10, 100),
+                cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 2)
+    cv2.putText(frame_shown, "VALUE:" + str(value), (round(f_width * 0.75 / 10) * 10, 150),
+                cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 2)
 
 
-
-        cv2.putText(frame_shown, "FPS:"+str(fps), (round(f_width*0.75/10)*10,100), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 2)
-        count += 1
-
-
+    print("当前帧：", num)
     # 保存当前帧到screenshot_folder
     screenshot_filename = "screenshot_{:06d}.png".format(int(cap.get(cv2.CAP_PROP_POS_FRAMES)))
 
@@ -673,6 +796,7 @@ while True:
     # 按下 'q' 键退出循环
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
+
 
 # 清理资源
 cap.release()
