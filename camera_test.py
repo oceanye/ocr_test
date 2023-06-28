@@ -23,6 +23,8 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s')
 # 设置日志级别为info
 logging.getLogger().setLevel(logging.CRITICAL)
 
+lang_model = 'final'#'eng'
+
 
 
 from pytesseract import pytesseract, image_to_string
@@ -132,60 +134,6 @@ def sort_coordinates(src_bound):
 
 
 
-def ocr(image):
-    # 将图像转换为灰度图像
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    # 计算背景颜色范围
-    pixel_count = image.shape[0] * image.shape[1] // 5
-    min_color = np.percentile(image.reshape(-1, 3), 2.5, axis=0, interpolation='lower')
-    max_color = np.percentile(image.reshape(-1, 3), 97.5, axis=0, interpolation='higher')
-
-    # 提取纯色背景
-    mask = np.all((image >= min_color) & (image <= max_color), axis=2)
-
-    # 显示mask结果
-    # cv2.imshow('Mask Image', mask.astype(np.uint8) * 255)
-
-    # 等待用户按下空格键
-    # while cv2.waitKey(0) != ord(' '):
-    #     pass
-
-    # 对图像进行二值化处理
-    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
-
-    # 使用轮廓检测分割字符区域
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # 绘制矩形框并识别字符
-    for contour in contours:
-        # 计算轮廓的边界框
-        x, y, w, h = cv2.boundingRect(contour)
-
-        # 绘制矩形框
-        cv2.rectangle(image, (x, y), (x+w, y+h), (0, 255, 0), 2)
-
-        # 提取字符区域
-        roi = binary[y:y+h, x:x+w]
-
-        # 使用Tesseract进行文字识别
-        result = pytesseract.image_to_string(roi, lang='eng')
-
-        # 显示识别结果
-        cv2.putText(image, result, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-
-    # 显示二值化结果和识别结果
-    #cv2.imshow('Binary Image', binary)
-    #cv2.imshow('OCR Result', image)
-
-    # 等待用户按下空格键
-    while cv2.waitKey(0) != ord(' '):
-        pass
-
-    cv2.destroyAllWindows()
-
-    return result
-# 创建保存图片的文件夹
 
 def mouse_callback(event, x, y, flags, param):
     global pmx, pmy
@@ -197,15 +145,7 @@ def mouse_callback(event, x, y, flags, param):
         pmy = y
 
 
-def ocr_percent(image):
-    # 将图像转换为灰度图像
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    # 使用Tesseract进行文字识别
-    result = pytesseract.image_to_string(gray, lang='eng')
-
-    # 显示识别结果
-    return result
 
 
 # 判定点是否在 contour 内部
@@ -393,6 +333,7 @@ def compute_binary_sum(regions):
     return binary_sums
 
 def save_regions(file_path,regions, binary_sums):
+    global lang_model
 
     rst = []
     binary_sums_sort = sorted(binary_sums, reverse=True)
@@ -419,7 +360,7 @@ def save_regions(file_path,regions, binary_sums):
         #rst = "v="+pytesseract.image_to_string(region, lang='eng')
         #if np.sum(region)>1000:
         if i == 1 or i==2:
-            rst1 = image_to_string(region, lang='eng',config='--psm 10 --oem 3 -c tessedit_char_whitelist=0123456789')
+            rst1 = image_to_string(region, lang=lang_model,config='--psm 10 --oem 3 -c tessedit_char_whitelist=0123456789')
         else:
             rst1 = ''
         str(rst1).replace("%","")
@@ -428,6 +369,7 @@ def save_regions(file_path,regions, binary_sums):
         rst.append(rst1)
         if True:
             fn=fn_parent+"//ocr//"+file_name.split('.')[0]+f"-region_{i+1}"+".png"
+            print("OCR_split_image: "+fn)
             cv2.imwrite(fn, region)
 
 
@@ -465,6 +407,7 @@ def str2int(rst):
     except:
         return ""
 def ocr_clip_img(image,fn_path):
+    global lang_model
     #fn, _ = os.path.splitext(file_path2)
 
     #统计当前函数运行时间
@@ -477,12 +420,11 @@ def ocr_clip_img(image,fn_path):
 
     # 先通过单字段识别两位整数，如果不在有效区域内，则进行拆分识别
 
-    rst = image_to_string(binary,lang='eng',config='--psm 7 --oem 1' )
-    #rst只保留前两个char，判断是否小于40
+    rst = image_to_string(binary,lang=lang_model,config='--psm 7 --oem 1' )    #rst只保留前两个char，判断是否小于40
     rst = rst[:2]
     value = str2int(rst)
 
-    if value != "":
+    if value != "" and value < 40 and value > 10:
         end = time.time()
 
         print("ocr_clip_img string time:", end - start)
@@ -714,7 +656,7 @@ while True:
                 fn_final = filepath+"-correct"+str(num)
                 cv2.imwrite(fn_final+".png", clip_final)
 
-                value= ocr_clip_img(clip_final,filepath)
+                value= ocr_clip_img(clip_final,fn_final)
 
 
 
@@ -759,10 +701,10 @@ while True:
             # ocr_text = ocr_percent(clip_correct)
             # ocr_text = ""
             # print(ocr_text)
-            fn_final = filepath + "-fake"+str(num)
+            fn_final = filepath + "-simi"+str(num) # 未识别得到矩形轮廓帧，则沿用前一帧的结果，并命名 simi
             cv2.imwrite(fn_final + ".png", clip_final)
 
-            value = ocr_clip_img(clip_final,filepath)
+            value = ocr_clip_img(clip_final,fn_final)
 
 
 
