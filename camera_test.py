@@ -1,8 +1,9 @@
 import copy
 import math
+import re
 import threading
 import time
-from random import random
+import random
 
 import cv2
 import numpy as np
@@ -14,8 +15,9 @@ import matplotlib.pyplot as plt
 from tkinter import Tk, filedialog
 
 import logging
+from pytesseract import pytesseract, image_to_string
 
-import ocr_clip
+
 
 # 配置日志输出格式
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s')
@@ -23,13 +25,16 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s')
 # 设置日志级别为info
 logging.getLogger().setLevel(logging.CRITICAL)
 
-lang_model = 'final'#'eng'
+lang_model = 'eng'#'eng'
 
 
 
-from pytesseract import pytesseract, image_to_string
 
 camera_on = False
+
+#file_path 为当前文件夹路径
+file_path = os.path.dirname(os.path.abspath(__file__))
+
 
 
 if camera_on:
@@ -47,28 +52,31 @@ else:
 
     # 打开文件选择框
     file_path = filedialog.askopenfilename()
+    #将file_path中的\替换为//
+    file_path = file_path.replace('/', '\\')
     cap = cv2.VideoCapture(file_path)
     print("video open")
 
 
+#---------------------------------------------------
 def get_angle(pt1, pt2):
     # 计算两个点之间的角度
     x_diff = pt2[0] - pt1[0]
     y_diff = pt2[1] - pt1[1]
     logging.info("x_diff:"+str(x_diff))
     logging.info("y_diff:"+str(y_diff))
-    return np.degrees(np.arctan2(y_diff, x_diff))
+    return np.degrees((np.arctan2(y_diff, x_diff)))
 
 def is_parallel(angle1, angle2, tolerance):
     # 判断两个角度是否平行
-    angle_diff = np.abs(angle1 - angle2)
+    angle_diff = np.abs(angle1-angle2)
     logging.info("angle_diff:"+str(angle_diff))
-    if angle_diff <= tolerance or angle_diff >= 180 - tolerance:
+    if angle_diff <= tolerance or angle_diff >= 360 - tolerance:
         return True
     else:
         return False
 
-def parallel_quar(contour, tolerance=10):
+def parallel_quar(contour, tolerance=1):
     #rect = cv2.minAreaRect(contour)
     #box = cv2.boxPoints(contour)
     #获得变量contour的点坐标，存成list
@@ -83,10 +91,10 @@ def parallel_quar(contour, tolerance=10):
     angle3 = get_angle(points[1], points[2])
     angle4 = get_angle(points[0], points[3])
 
-    #logging.info("angle1:"+str(angle1))
-    #logging.info("angle2:"+str(angle2))
-    #logging.info("angle3:"+str(angle3))
-    #logging.info("angle4:"+str(angle4))
+    logging.info("angle1:"+str(angle1))
+    logging.info("angle2:"+str(angle2))
+    logging.info("angle3:"+str(angle3))
+    logging.info("angle4:"+str(angle4))
 
     if is_parallel(angle1, angle2, tolerance) and is_parallel(angle3, angle4, tolerance):
         return contour
@@ -130,11 +138,6 @@ def sort_coordinates(src_bound):
 
     return relative_coordinates
 
-
-
-
-
-
 def mouse_callback(event, x, y, flags, param):
     global pmx, pmy
     if event == cv2.EVENT_LBUTTONDOWN:  # 检测到鼠标左键点击事件
@@ -143,9 +146,6 @@ def mouse_callback(event, x, y, flags, param):
         is_clicked = True
         pmx = x
         pmy = y
-
-
-
 
 
 # 判定点是否在 contour 内部
@@ -227,7 +227,7 @@ def filter_contours(contours):
 
                 #判断对边平行与否
                 # print("---------"+str(count)+"-----------")
-                parallel_approx = parallel_quar(approx, 10)
+                parallel_approx = parallel_quar(approx, 2)
 
                 if (parallel_approx is None):
                     continue
@@ -361,15 +361,34 @@ def save_regions(file_path,regions, binary_sums):
         #if np.sum(region)>1000:
         if i == 1 or i==2:
             rst1 = image_to_string(region, lang=lang_model,config='--psm 10 --oem 3 -c tessedit_char_whitelist=0123456789')
+            #rst1中替换所有换行符\n
+            rst1 = rst1.replace("\n", "")
+            rst1 = rst1.replace("%", "")
+            #提取rst1中的数字，形成整数
+            rst1 = re.findall(r"\d+\.?\d*", rst1)
+            rst1 = "".join(rst1)
+
+            #如果rst1是数字
+            if rst1.isdigit():
+                fn = fn_parent + "//ocr//"+str(rst1)+"//" + file_name.split('.')[0] + f"-region{i + 1}_NUM{rst1}.png"
+                str(rst1).replace("%", "")
+                print("v=" + rst1)
+                logging.info("v=" + rst1)
+                rst.append(rst1)
+            else:
+                # rst1等于100-200之间的随机数
+                rst1 = "X" + str(random.randint(100, 200))
+                fn = fn_parent + "//ocr//" + file_name.split('.')[0] + f"-region{i + 1}_NUM{rst1}.png"
+
+
         else:
-            rst1 = ''
-        str(rst1).replace("%","")
-        print("v="+rst1)
-        logging.info("v="+rst1)
-        rst.append(rst1)
+            #rst1等于100-200之间的随机数
+            rst1 = "X"+str(random.randint(100, 200))
+            fn = fn_parent + "//ocr//" + file_name.split('.')[0] + f"-region{i + 1}_NUM{rst1}.png"
+
         if True:
-            fn=fn_parent+"//ocr//"+file_name.split('.')[0]+f"-region_{i+1}"+".png"
-            print("OCR_split_image: "+fn)
+
+            print("OCR_split_image: " + fn)
             cv2.imwrite(fn, region)
 
 
@@ -420,18 +439,20 @@ def ocr_clip_img(image,fn_path):
 
     # 先通过单字段识别两位整数，如果不在有效区域内，则进行拆分识别
 
-    rst = image_to_string(binary,lang=lang_model,config='--psm 7 --oem 1' )    #rst只保留前两个char，判断是否小于40
+    rst = image_to_string(binary,lang=lang_model,config='--psm 7 --oem 1 -c tessedit_char_whitelist=0123456789%'  )    #rst只保留前两个char，判断是否小于40-c tessedit_char_whitelist=0123456789%
     rst = rst[:2]
     value = str2int(rst)
 
-    if value != "" and value < 40 and value > 10:
+    if value != "" and value != None and value < 40 and value > 10:
         end = time.time()
 
         print("ocr_clip_img string time:", end - start)
-        print ("字段检测成功 数值 = ", value)
+        print ("字段-检测成功 数值 = ", value)
 
         return value
     else:
+        print("字段-检测结果：",rst)
+        print("字段-检测失败，拆分后重新检测")
         #拆分后识别
 
         #split_y = proj_split(binary, binary.shape[1]*5, "vertical")
@@ -459,12 +480,15 @@ def ocr_clip_img(image,fn_path):
         binary_sum = compute_binary_sum(regions)
         value = save_regions(fn_path,regions, binary_sum)
 
-    #统计当前函数运行时间
+        #统计当前函数运行时间
 
-    end = time.time()
-    print("ocr_clip_img char time:",end-start)
-    print("单字符检测成功 数值 = ",value)
-
+        end = time.time()
+        print("ocr_clip_img char time:",end-start)
+        #如果value 不为None
+        if value != None:
+            print("单字符-检测成功 数值 = ",value)
+        else:
+            print("单字符-检测失败")
 
     return value
 #-------------------------------
@@ -486,6 +510,12 @@ if not os.path.exists(clip_folder):
 ocr_folder = os.path.join(pic_folder, "ocr")
 if not os.path.exists(ocr_folder):
     os.makedirs(ocr_folder)
+
+# 检查在ocr_folder下是否存在以数字1-9命名的文件夹，如果不存在则创建
+for i in range(1, 10):
+    folder = os.path.join(ocr_folder, str(i))
+    if not os.path.exists(folder):
+        os.makedirs(folder)
 
 ret, frame = cap.read()
 
@@ -525,6 +555,11 @@ fps_counter.start()
 fps = 0
 
 num=0
+
+# 通过调用tinker，建立一个窗口，有一个滑条，设置2个滑块，分别是最小值和最大值，控制canny的阈值
+# 通过滑块调节阈值，实时显示canny的效果
+# 通过滑块调节阈值，实时显示canny的效果
+
 
 while True:
     num=num+1
@@ -602,8 +637,14 @@ while True:
 
             # 切割四边形区域并保存为图像文件
             now = datetime.datetime.now()
-            filename = "{}-{}-{}-{}-{}-{}".format(now.month, now.day, now.hour, now.minute,
-                                                            now.second, count)
+
+            #filename为选中文件的文件名，不包含后缀，另加 count
+            if camera_on == True:
+                # 实时读取摄像头时，以时间命名
+                filename = "{}-{}-{}-{}-{}-{}".format(now.month, now.day, now.hour, now.minute,now.second, count)
+            else:
+                filename = file_path.split("\\")[-1].split(".")[0] + "-" + str(count)
+
             filepath = os.path.join(clip_folder, filename)
 
 
@@ -625,6 +666,8 @@ while True:
                 # 裁剪四边形区域并保存为图像文件
                 global x,y,w,h  # 裁剪区域的坐标和宽高
                 x, y, w, h = cv2.boundingRect(parallel_approx)
+                print("锁定当前帧 x,y,w,h:",x,y,w,h)
+
                 clip = frame_copy[y:y + h, x:x + w]
 
                 # 将x,y,w,h 生成dst_bound
@@ -638,8 +681,13 @@ while True:
                 # print("dst_bound:",dst_bound)
                 global transform_matrix
 
+
+
+
                 transform_matrix = cv2.getPerspectiveTransform(src_bound, dst_bound)
                 clip_correct = cv2.warpPerspective(clip, transform_matrix, (w, h))
+
+
 
                 # 统一裁剪区域大小
                 clip_resize = cv2.resize(clip_correct, (350, 120), interpolation=cv2.INTER_CUBIC)
@@ -647,7 +695,8 @@ while True:
                 # 去除边框
                 clip_final = clip_resize[10:110, 35:335]
 
-
+                print("clip.shape:", clip.shape)
+                print("transform_matrix:", transform_matrix.shape)
 
 
                 #ocr_text = ocr_percent(clip_correct)
@@ -661,6 +710,7 @@ while True:
 
 
                 cv2.drawContours(frame_shown, [parallel_approx], 0, ( 255,0, 0), 2)
+
                 # drawcontour 用虚线
 
                 #cv2 绘制矩形填充区域，颜色红色，透明度50%
@@ -684,8 +734,29 @@ while True:
     else:
 
         try:
+
+
+            now = datetime.datetime.now()
+
+            #filename为选中文件的文件名，不包含后缀，另加 count
+            if camera_on == True:
+                # 实时读取摄像头时，以时间命名
+                filename = "{}-{}-{}-{}-{}-{}".format(now.month, now.day, now.hour, now.minute,now.second, count)
+            else:
+                filename = file_path.split("\\")[-1].split(".")[0] + "-" + str(count)
+
+            filepath = os.path.join(clip_folder, filename)
+
+
+            filepath_ocr = os.path.join(ocr_folder, filename)
+
+            frame_copy = frame.copy()
+
             # 裁剪四边形区域并保存为图像文件
 
+            #logging.info("frame_copy:",frame_copy)
+
+            #logging.info("采用上一帧数据 x,y,w,h:",str(x),str(y),str(w),str(h))
 
             clip = frame_copy[y:y + h, x:x + w]
 
@@ -716,8 +787,11 @@ while True:
             fps = round(fps_counter.get_fps(), 2)
             logging.info("帧率:" + str(fps))
             logging.info("当前帧："+str(num))
-        except:
+        except Exception as e:
+
+            print('Reason:', e)
             pass
+
 
     cv2.putText(frame_shown, "FPS:" + str(fps), (round(f_width * 0.75 / 10) * 10, 100),
                 cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 2)
@@ -735,9 +809,14 @@ while True:
     # 显示处理后的图像
     cv2.imshow('Frame', frame_shown)
 
+    #if num>95:
+    #    parallel_quar(parallel_approx, 2)
+
     # 按下 'q' 键退出循环
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
+
+
 
 
 # 清理资源
