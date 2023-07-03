@@ -25,7 +25,8 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s')
 # 设置日志级别为info
 logging.getLogger().setLevel(logging.CRITICAL)
 
-lang_model = 'eng'#'eng'
+lang_model = 'final'#''eng'
+
 
 
 
@@ -227,7 +228,7 @@ def filter_contours(contours):
 
                 #判断对边平行与否
                 # print("---------"+str(count)+"-----------")
-                parallel_approx = parallel_quar(approx, 2)
+                parallel_approx = parallel_quar(approx, 10)
 
                 if (parallel_approx is None):
                     continue
@@ -440,8 +441,14 @@ def ocr_clip_img(image,fn_path):
     # 先通过单字段识别两位整数，如果不在有效区域内，则进行拆分识别
 
     rst = image_to_string(binary,lang=lang_model,config='--psm 7 --oem 1 -c tessedit_char_whitelist=0123456789%'  )    #rst只保留前两个char，判断是否小于40-c tessedit_char_whitelist=0123456789%
-    rst = rst[:2]
+
+    #rst中只保留数字
+    rst = re.findall(r"\d+\.?\d*", rst)
+    #rst = rst[:2]
     value = str2int(rst)
+
+    #筛选出rst中除了数字之外的字符
+
 
     if value != "" and value != None and value < 40 and value > 10:
         end = time.time()
@@ -581,7 +588,7 @@ while True:
     frame_shown = frame
 
     # 边缘检测
-    edges = cv2.Canny(blurred_frame, 0, 20)
+    edges = cv2.Canny(blurred_frame, 0, 20) # 调整canny阈值
 
 
 
